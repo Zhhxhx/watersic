@@ -30,9 +30,15 @@ model_reg: dict[str, str] = {
     "3-70B-2s": "Llama-3-70B-2shard",
     "3-8B": "Llama-3-8B",
     "qwen3-8B": "Qwen/Qwen3-8B",
+    # BAGEL 理解专家(抽成 Qwen3 结构);名字以 qwen3 开头以复用 _is_qwen3/_load_qwen3
+    "qwen3-bagelund": "/share/liujun/xinhaolee/workspace/research/2027-conf/HPCA/ARGUS/code/artifacts/bagel-und-qwen3shape",
+    # JanusFlow LLM 骨干(DeepSeek-LLM-1.3B, 抽成 Qwen3-shape);同样以 qwen3 开头复用加载路径
+    "qwen3-januslm": "/share/liujun/xinhaolee/workspace/research/2027-conf/HPCA/ARGUS/code/artifacts/janusflow-llm-qwen3shape",
 }
 
 hess_reg: dict[str, str] = {
+    "qwen3-bagelund": "hess_qwen3_bagelund",
+    "qwen3-januslm": "hess_qwen3_januslm",
     "2-7B": "hess7",
     "3-70B": "hess3_70",
     "2-13B": "hess7",
@@ -44,6 +50,8 @@ hess_reg: dict[str, str] = {
 }
 
 acts_reg: dict[str, str] = {
+    "qwen3-bagelund": "acts_qwen3_bagelund",
+    "qwen3-januslm": "acts_qwen3_januslm",
     "2-7B": "acts7",
     "3-70B": "acts3_70",
     "2-13B": "acts7",

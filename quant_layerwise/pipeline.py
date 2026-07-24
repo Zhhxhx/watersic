@@ -1799,18 +1799,40 @@ def run_pipeline(cfg: PipelineConfig, *, local_rank: int = 0) -> Path:
         # Hessian computation: always from the progressively-quantized model's
         # live cache. Using unquant H changes the quantization landscape
         # (different LDLQ → different coord-adapt search → PPL regression).
-        H, nseq_used, ntokens_used = compute_module_hessian_cached(
-            model,
-            cache,
-            layer_id,
-            module_name,
-            per_rank=False if _is_row_parallel else None,  # Gather full Hessian for RowParallel
-            normalize=True,
-            normalize_by="tokens",  # True E[X X^T] normalization
-            dtype=torch.float64,
-            verbose=True,
-            batch_size=_bs,
-        )
+        # [ARGUS T1 patch] If precomputed multimodal Σ_X is supplied, use it as the
+        # main quantization Hessian (deliberate: we WANT modality-aware rate allocation
+        # from BAGEL real-forward activations, not text-calib live-cache H). Only for
+        # basic ZSIC (no qronos/residual/attn-weighted, which need live/drift stats).
+        _basic_zsic = not (cfg.qronos or cfg.residual_compensation or cfg.attn_weighted_qkv)
+        if precomputed is not None and _basic_zsic and precomputed.has_hessian(module_name):
+            H = precomputed.load_hessian(module_name, device=device).to(torch.float64)
+            # 保证 PD:外部 Σ_X 由有限 COCO 样本 + f32 累积估计,视觉大幅值导致的精度损失会产生
+            # 小负特征值,使 Cholesky 失败。用 jitter-to-PD 逐步加最小必要 ridge(mean(diag) 比例),
+            # 对 mm/text 一致处理,不影响对比公平。
+            _d = float(H.diag().mean())
+            _j = 0.001
+            for _ in range(14):
+                _, _info = torch.linalg.cholesky_ex(H)
+                if int(_info) == 0:
+                    break
+                H.diagonal().add_(_j * _d)
+                _j *= 3.0
+            nseq_used, ntokens_used = int(precomputed.nsamples), int(precomputed.nsamples) * int(cfg.seqlen)
+            print(f"[precomputed-H] {module_name}: external multimodal Σ_X "
+                  f"(shape={tuple(H.shape)}, jitter_ridge≈{_j/3:.4f}*mean)", flush=True)
+        else:
+            H, nseq_used, ntokens_used = compute_module_hessian_cached(
+                model,
+                cache,
+                layer_id,
+                module_name,
+                per_rank=False if _is_row_parallel else None,  # Gather full Hessian for RowParallel
+                normalize=True,
+                normalize_by="tokens",  # True E[X X^T] normalization
+                dtype=torch.float64,
+                verbose=True,
+                batch_size=_bs,
+            )
 
         # Compute Qronos stats (Σ_X, Σ_X̂, Σ_XX̂) when:
         # - qronos=True: stats are computed and used for Qronos targeting
