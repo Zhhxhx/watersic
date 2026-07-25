@@ -19,12 +19,11 @@ def get_bucket_path() -> Path:
     return Path(p)
 
 
-# ARGUS 专用 scaffold(BAGEL-und / JanusFlow 抽成 Qwen3-shape)存放在 research 仓库的
-# artifacts 目录(在本 submodule 之外)。用 ARGUS_ARTIFACTS_DIR 覆盖以便跨机/跨 checkout;
-# 缺省指向原开发机路径。这些值是绝对路径, `base_dir / model_reg[name]` 仍原样返回它们。
+# ARGUS 专用 scaffold(BAGEL-und / JanusFlow 抽成 Qwen3-shape)存放在 artifacts 目录
+# (在本 submodule 之外)。用 ARGUS_ARTIFACTS_DIR 覆盖;缺省推导为宿主仓库根下 artifacts/。
 _ARGUS_ARTIFACTS = os.environ.get(
     "ARGUS_ARTIFACTS_DIR",
-    "/share/liujun/xinhaolee/workspace/research/2027-conf/HPCA/ARGUS/code/artifacts",
+    os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "artifacts")),
 )
 
 model_reg: dict[str, str] = {
