@@ -19,6 +19,14 @@ def get_bucket_path() -> Path:
     return Path(p)
 
 
+# ARGUS 专用 scaffold(BAGEL-und / JanusFlow 抽成 Qwen3-shape)存放在 research 仓库的
+# artifacts 目录(在本 submodule 之外)。用 ARGUS_ARTIFACTS_DIR 覆盖以便跨机/跨 checkout;
+# 缺省指向原开发机路径。这些值是绝对路径, `base_dir / model_reg[name]` 仍原样返回它们。
+_ARGUS_ARTIFACTS = os.environ.get(
+    "ARGUS_ARTIFACTS_DIR",
+    "/share/liujun/xinhaolee/workspace/research/2027-conf/HPCA/ARGUS/code/artifacts",
+)
+
 model_reg: dict[str, str] = {
     "2-7B": "Llama-2-7B",
     "3-70B": "Llama-3-70B-fixed",
@@ -31,9 +39,9 @@ model_reg: dict[str, str] = {
     "3-8B": "Llama-3-8B",
     "qwen3-8B": "Qwen/Qwen3-8B",
     # BAGEL 理解专家(抽成 Qwen3 结构);名字以 qwen3 开头以复用 _is_qwen3/_load_qwen3
-    "qwen3-bagelund": "/share/liujun/xinhaolee/workspace/research/2027-conf/HPCA/ARGUS/code/artifacts/bagel-und-qwen3shape",
+    "qwen3-bagelund": os.path.join(_ARGUS_ARTIFACTS, "bagel-und-qwen3shape"),
     # JanusFlow LLM 骨干(DeepSeek-LLM-1.3B, 抽成 Qwen3-shape);同样以 qwen3 开头复用加载路径
-    "qwen3-januslm": "/share/liujun/xinhaolee/workspace/research/2027-conf/HPCA/ARGUS/code/artifacts/janusflow-llm-qwen3shape",
+    "qwen3-januslm": os.path.join(_ARGUS_ARTIFACTS, "janusflow-llm-qwen3shape"),
 }
 
 hess_reg: dict[str, str] = {
