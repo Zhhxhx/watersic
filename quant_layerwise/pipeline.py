@@ -133,7 +133,7 @@ def _load_qwen3(
     Returns:
         model, tokenizer (with Llama-compatible interface)
     """
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
     from parallel.qwen3_adapter import Qwen3ToLlamaAdapter, Qwen3TokenizerAdapter
 
     # Get HuggingFace path from registry
@@ -142,11 +142,13 @@ def _load_qwen3(
     # Check for local cache in QUANT_BUCKET
     # Try multiple possible folder names: Qwen3-8B, qwen3-8B, Qwen_Qwen3-8B
     bucket = get_bucket_path()
-    local_candidates = [
+    registered_path = Path(hf_path).expanduser()
+    local_candidates = [registered_path] if registered_path.is_dir() else []
+    local_candidates.extend([
         bucket / "Qwen3-8B",           # Most common manual download name
         bucket / model_name,            # e.g., qwen3-8B
         bucket / hf_path.replace("/", "_"),  # e.g., Qwen_Qwen3-8B
-    ]
+    ])
     local_path = None
     for candidate in local_candidates:
         if candidate.exists():
@@ -164,12 +166,22 @@ def _load_qwen3(
     hf_tokenizer = AutoTokenizer.from_pretrained(hf_path, trust_remote_code=True)
     tokenizer = Qwen3TokenizerAdapter(hf_tokenizer)
 
-    # Load model
-    hf_model = AutoModelForCausalLM.from_pretrained(
+    # Qwen3-VL uses AutoModelForImageTextToText and nests the decoder below
+    # model.language_model. Plain Qwen3 remains on AutoModelForCausalLM.
+    hf_config = AutoConfig.from_pretrained(hf_path, trust_remote_code=True)
+    is_qwen3_vl = getattr(hf_config, "model_type", "") == "qwen3_vl"
+    if is_qwen3_vl:
+        from transformers import AutoModelForImageTextToText
+
+        model_class = AutoModelForImageTextToText
+    else:
+        model_class = AutoModelForCausalLM
+    hf_model = model_class.from_pretrained(
         hf_path,
         torch_dtype=torch.bfloat16,
         device_map=f"cuda:{local_rank}",
         trust_remote_code=True,
+        local_files_only=bool(local_path is not None),
     )
 
     # Wrap in adapter
@@ -177,7 +189,11 @@ def _load_qwen3(
     if max_seq_len is not None:
         override_params["max_seq_len"] = max_seq_len
 
-    model = Qwen3ToLlamaAdapter(hf_model, override_params)
+    model = Qwen3ToLlamaAdapter(
+        hf_model,
+        override_params,
+        allocate_kv_cache=not is_qwen3_vl,
+    )
 
     return model, tokenizer
 

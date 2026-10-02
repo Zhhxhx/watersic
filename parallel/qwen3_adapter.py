@@ -52,7 +52,8 @@ class _AttentionAdapter(nn.Module):
         wo -> o_proj
     """
 
-    def __init__(self, hf_attn, n_heads: int, n_kv_heads: int, head_dim: int, max_batch_size: int, max_seq_len: int):
+    def __init__(self, hf_attn, n_heads: int, n_kv_heads: int, head_dim: int,
+                 max_batch_size: int, max_seq_len: int, allocate_kv_cache: bool = True):
         super().__init__()
         self.n_local_heads = n_heads
         self.n_local_kv_heads = n_kv_heads
@@ -67,9 +68,15 @@ class _AttentionAdapter(nn.Module):
         self.wo = hf_attn.o_proj
 
         # Initialize KV caches
-        cache_shape = (max_batch_size, max_seq_len, n_kv_heads, head_dim)
-        self.cache_k = torch.zeros(cache_shape, dtype=torch.bfloat16).cuda()
-        self.cache_v = torch.zeros(cache_shape, dtype=torch.bfloat16).cuda()
+        if allocate_kv_cache:
+            cache_shape = (max_batch_size, max_seq_len, n_kv_heads, head_dim)
+        else:
+            # Precomputed-Sigma quantization never performs autoregressive
+            # decoding. Avoid allocating ~10 GiB of unused cache for Qwen3-VL.
+            cache_shape = (0, 0, n_kv_heads, head_dim)
+        device = hf_attn.q_proj.weight.device
+        self.cache_k = torch.zeros(cache_shape, dtype=torch.bfloat16, device=device)
+        self.cache_v = torch.zeros(cache_shape, dtype=torch.bfloat16, device=device)
 
 
 class _FFNAdapter(nn.Module):
@@ -101,7 +108,9 @@ class Qwen3LayerAdapter(nn.Module):
         .ffn_norm
     """
 
-    def __init__(self, hf_layer, n_heads: int, n_kv_heads: int, head_dim: int, max_batch_size: int, max_seq_len: int, rotary_emb=None):
+    def __init__(self, hf_layer, n_heads: int, n_kv_heads: int, head_dim: int,
+                 max_batch_size: int, max_seq_len: int, rotary_emb=None,
+                 allocate_kv_cache: bool = True):
         super().__init__()
         # Store HF layer without registering as submodule to avoid named_modules() conflicts
         object.__setattr__(self, '_hf_layer', hf_layer)
@@ -118,6 +127,7 @@ class Qwen3LayerAdapter(nn.Module):
             head_dim=head_dim,
             max_batch_size=max_batch_size,
             max_seq_len=max_seq_len,
+            allocate_kv_cache=allocate_kv_cache,
         )
         self.feed_forward = _FFNAdapter(hf_layer.mlp)
 
@@ -193,12 +203,24 @@ class Qwen3ToLlamaAdapter(nn.Module):
         layers.0.feed_forward.w1  (actually pointing to mlp.gate_proj)
     """
 
-    def __init__(self, hf_model, override_params: Optional[Dict[str, Any]] = None):
+    def __init__(self, hf_model, override_params: Optional[Dict[str, Any]] = None,
+                 allocate_kv_cache: bool = True):
         super().__init__()
         # Store HF model without registering as submodule to avoid named_modules() conflicts
         # (PyTorch deduplicates modules, and we need our adapter paths to take precedence)
         object.__setattr__(self, '_hf_model', hf_model)
-        self.config = hf_model.config
+        # Qwen3 text checkpoints expose ``model.layers``. Qwen3-VL exposes the
+        # same decoder under ``model.language_model.layers`` and stores its
+        # architecture fields in ``config.text_config``.
+        hf_container = hf_model.model
+        if hasattr(hf_container, "language_model"):
+            text_model = hf_container.language_model
+            text_config = hf_model.config.text_config
+        else:
+            text_model = hf_container
+            text_config = hf_model.config
+        object.__setattr__(self, '_text_model', text_model)
+        self.config = text_config
 
         # Build params (equivalent to ModelArgs)
         max_seq_len = 2048
@@ -225,7 +247,7 @@ class Qwen3ToLlamaAdapter(nn.Module):
 
         # Get the rotary embedding module from the model
         # In HF Qwen3, it's at model.model.rotary_emb
-        rotary_emb = hf_model.model.rotary_emb
+        rotary_emb = text_model.rotary_emb
 
         # Expose layers with Llama-like interface
         self.n_layers = self.params.n_layers
@@ -238,13 +260,14 @@ class Qwen3ToLlamaAdapter(nn.Module):
                 max_batch_size=max_batch_size,
                 max_seq_len=max_seq_len,
                 rotary_emb=rotary_emb,
+                allocate_kv_cache=allocate_kv_cache,
             )
-            for layer in hf_model.model.layers
+            for layer in text_model.layers
         ])
 
         # Other components - expose with Llama naming
-        self.tok_embeddings = hf_model.model.embed_tokens
-        self.norm = hf_model.model.norm
+        self.tok_embeddings = text_model.embed_tokens
+        self.norm = text_model.norm
         self.output = hf_model.lm_head
 
         # Store vocab size for compatibility
@@ -260,6 +283,8 @@ class Qwen3ToLlamaAdapter(nn.Module):
         for layer in self.layers:
             attn = layer.attention
             old_shape = attn.cache_k.shape
+            if old_shape[0] == 0:
+                continue
             new_shape = (new_batch_size, old_shape[1], old_shape[2], old_shape[3])
             attn.cache_k = torch.zeros(new_shape, device=attn.cache_k.device, dtype=attn.cache_k.dtype)
             attn.cache_v = torch.zeros(new_shape, device=attn.cache_v.device, dtype=attn.cache_v.dtype)

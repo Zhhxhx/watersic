@@ -27,6 +27,7 @@ _ARGUS_ARTIFACTS = os.environ.get(
 )
 
 model_reg: dict[str, str] = {
+    "qwen3-vl-8b-thinking": os.path.join(os.environ.get("ARGUS_MODEL_ROOT", "models"), "Qwen3-VL-8B-Thinking"),
     "2-7B": "Llama-2-7B",
     "3-70B": "Llama-3-70B-fixed",
     "3-70B-4s": "Llama-3-70B-4shard",
@@ -44,6 +45,7 @@ model_reg: dict[str, str] = {
 }
 
 hess_reg: dict[str, str] = {
+    "qwen3-vl-8b-thinking": "hess_qwen3_vl_8b_thinking",
     "qwen3-bagelund": "hess_qwen3_bagelund",
     "qwen3-januslm": "hess_qwen3_januslm",
     "2-7B": "hess7",
@@ -57,6 +59,7 @@ hess_reg: dict[str, str] = {
 }
 
 acts_reg: dict[str, str] = {
+    "qwen3-vl-8b-thinking": "acts_qwen3_vl_8b_thinking",
     "qwen3-bagelund": "acts_qwen3_bagelund",
     "qwen3-januslm": "acts_qwen3_januslm",
     "2-7B": "acts7",
